@@ -1,3 +1,68 @@
+--[[
+    IKYY OPTIMIZER - INSTANT LOG EDITION
+    Maximum speed with instant console log forwarding
+--]]
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
+local player = Players.LocalPlayer
+-- ========================
+-- INSTANT LOG FORWARDING SYSTEM
+-- ========================
+local logBuffer = {}
+local maxBufferSize = 100
+local flushInterval = 0.01  -- Flush every 0.01 seconds (100 times per second)
+-- Override print to capture and forward instantly
+local oldPrint = print
+local oldWarn = warn
+local oldError = error
+-- Instant console forwarding
+local function instantLog(message, logType)
+    logType = logType or "INFO"
+    
+    -- Send to executor console immediately
+    if rconsoleprint then
+        local timestamp = os.date("%H:%M:%S")
+        local prefix = ""
+        
+        if logType == "WARN" then
+            prefix = "âš ï¸� "
+        elseif logType == "ERROR" then
+            prefix = "â�Œ "
+        else
+            prefix = "âœ“ "
+        end
+        
+        -- INSTANT OUTPUT - no buffering
+        rconsoleprint(string.format("[%s] %s%s\n", timestamp, prefix, tostring(message)))
+    end
+    
+    -- Also buffer for batch operations if needed
+    table.insert(logBuffer, {
+        time = tick(),
+        message = message,
+        type = logType
+    })
+    
+    -- Keep buffer size limited
+    if #logBuffer > maxBufferSize then
+        table.remove(logBuffer, 1)
+    end
+end
+-- Override print functions for instant forwarding
+print = function(...)
+    local args = {...}
+    local message = table.concat({...}, " ")
+    oldPrint(...)
+    instantLog(message, "INFO")
+end
+warn = function(...)
+    local message = table.concat({...}, " ")
+    oldWarn(...)
+    instantLog(message, "WARN")
+end
 -- High-frequency log flusher (even faster)
 task.spawn(function()
     while task.wait(flushInterval) do
