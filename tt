@@ -6,7 +6,7 @@ local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local ConfigFile = "kinkAMARHubConfig.json"
+local ConfigFile = "IkyhubConfig.json"
 
 -- ⚙️ PODER EXACTO: 23 - 32 - 70
 local NIVELES = {
@@ -182,7 +182,7 @@ end
 if CoreGui:FindFirstChild("KinkAMARHub_UI") then CoreGui.KinkAmar_UI:Destroy() end
 
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "KINK AMAR_UI"
+screenGui.Name = "Iky Hub_UI"
 screenGui.Parent = CoreGui
 screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.ResetOnSpawn = false
@@ -270,7 +270,7 @@ titleLabel.BackgroundTransparency = 1
 titleLabel.Position = UDim2.new(0, 3, 0, 0)
 titleLabel.Size = UDim2.new(0, 80, 0, 22)
 titleLabel.Font = Enum.Font.GothamBlack
-titleLabel.Text = "KINK AMAR HUB"
+titleLabel.Text = "Iky HUB"
 titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleLabel.TextSize = 16
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -283,7 +283,7 @@ shadowLabel.BackgroundTransparency = 1
 shadowLabel.Position = UDim2.new(0, 3, 0, 0)
 shadowLabel.Size = UDim2.new(0, 80, 0, 22)
 shadowLabel.Font = Enum.Font.GothamBlack
-shadowLabel.Text = "KINK AMAR HUB"
+shadowLabel.Text = "Iky HUB"
 shadowLabel.TextSize = 16
 shadowLabel.TextXAlignment = Enum.TextXAlignment.Left
 shadowLabel.TextYAlignment = Enum.TextYAlignment.Center
