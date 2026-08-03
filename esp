@@ -19,7 +19,7 @@
     if old then old:Destroy() end
 
     local gui = Instance.new("ScreenGui")
-    gui.Name = 
+    gui.Name = "TPSweetBanner"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.DisplayOrder = 999999
@@ -49,7 +49,7 @@
     label.Size = UDim2.new(1,-20,1,-12)
     label.Font = Enum.Font.GothamBlack
     label.TextScaled = true
-    label.Text = "discord.gg/tpsweet"
+    label.Text = ""
     label.TextColor3 = Color3.new(1,1,1)
     label.TextStrokeColor3 = Color3.fromRGB(5,15,40)
     label.TextStrokeTransparency = 0
