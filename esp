@@ -19,7 +19,7 @@
     if old then old:Destroy() end
 
     local gui = Instance.new("ScreenGui")
-    gui.Name = "TPSweetBanner"
+    gui.Name = 
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
     gui.DisplayOrder = 999999
