@@ -1,0 +1,596 @@
+--==================================================
+-- COMBINED PODIUM ESP + NEXT EMPTY BASE
+--==================================================
+
+-- Script 1: Podium ESP / Projected Podiums
+
+local Plots = workspace:WaitForChild("Plots")
+local Map = workspace:WaitForChild("Map")
+
+local COLOR = Color3.fromRGB(170, 85, 255)
+
+local FLOOR_TOLERANCE = 8
+local SLOT_HORIZONTAL_TOLERANCE = 1.5
+local SLOT_VERTICAL_TOLERANCE = 2
+
+local FLOOR_COUNT = 3
+local FALLBACK_FLOOR_SPACING = 18
+local THIRD_FLOOR_DROP = 0.5
+
+local COLLISION_THICKNESS = 0.5
+
+local cachedFloorSpacing = nil
+
+local oldHolder = Map:FindFirstChild("<markers>")
+if oldHolder then
+	oldHolder:Destroy()
+end
+
+local holder = Instance.new("Folder")
+holder.Name = "<markers>"
+holder.Parent = Map
+
+local function getBaseBounds(slot)
+	local target = slot:FindFirstChild("Base", true) or slot
+
+	if target:IsA("Model") then
+		local success, cf, size = pcall(function()
+			return target:GetBoundingBox()
+		end)
+
+		if success then
+			return cf, size
+		end
+	elseif target:IsA("BasePart") then
+		return target.CFrame, target.Size
+	end
+
+	return nil, nil
+end
+
+local function makeBox(cf, size, isProjected)
+	local marker = Instance.new("Part")
+	marker.Name = if isProjected
+		then "ProjectedPodiumMarker"
+		else "ExistingPodiumMarker"
+
+	marker.Anchored = true
+	marker.CanCollide = false
+	marker.CanQuery = false
+	marker.CanTouch = false
+	marker.CastShadow = false
+	marker.Transparency = 1
+	marker.Size = size
+	marker.CFrame = cf
+	marker.Parent = holder
+
+	local selectionBox = Instance.new("SelectionBox")
+	selectionBox.Name = "PodiumESP"
+	selectionBox.Adornee = marker
+	selectionBox.Color3 = COLOR
+	selectionBox.SurfaceColor3 = COLOR
+	selectionBox.LineThickness = 0.06
+	selectionBox.Transparency = 0
+	selectionBox.SurfaceTransparency = 0.82
+	selectionBox.Parent = marker
+
+	local collisionPlate = Instance.new("Part")
+	collisionPlate.Name = if isProjected
+		then "ProjectedPodiumCollision"
+		else "ExistingPodiumCollision"
+
+	collisionPlate.Anchored = true
+	collisionPlate.CanCollide = true
+	collisionPlate.CanQuery = true
+	collisionPlate.CanTouch = false
+	collisionPlate.CastShadow = false
+	collisionPlate.Transparency = 1
+
+	collisionPlate.Size = Vector3.new(
+		size.X,
+		COLLISION_THICKNESS,
+		size.Z
+	)
+
+	collisionPlate.CFrame =
+		cf
+		* CFrame.new(
+			0,
+			-(size.Y - COLLISION_THICKNESS) / 2,
+			0
+		)
+
+	collisionPlate.Parent = holder
+
+	return marker, collisionPlate
+end
+
+local function addFloorLevel(levels, y)
+	for _, level in ipairs(levels) do
+		if math.abs(level.y - y) <= FLOOR_TOLERANCE then
+			level.count += 1
+			level.y += (y - level.y) / level.count
+			return
+		end
+	end
+
+	table.insert(levels, {
+		y = y,
+		count = 1,
+	})
+end
+
+local function getPlotLevels(podiums)
+	local levels = {}
+
+	for _, slot in ipairs(podiums:GetChildren()) do
+		local cf = getBaseBounds(slot)
+
+		if cf then
+			addFloorLevel(levels, cf.Position.Y)
+		end
+	end
+
+	table.sort(levels, function(first, second)
+		return first.y < second.y
+	end)
+
+	return levels
+end
+
+local function detectFloorSpacing()
+	local bestSpacing = nil
+	local bestConfidence = 0
+
+	for _, plot in ipairs(Plots:GetChildren()) do
+		local podiums = plot:FindFirstChild("AnimalPodiums")
+
+		if podiums then
+			local levels = getPlotLevels(podiums)
+
+			if #levels >= 2 then
+				local spacing =
+					levels[2].y - levels[1].y
+
+				if spacing > FLOOR_TOLERANCE then
+					local confidence =
+						levels[1].count
+						+ levels[2].count
+
+					if confidence > bestConfidence then
+						bestConfidence = confidence
+						bestSpacing = spacing
+					end
+				end
+			end
+		end
+	end
+
+	if bestSpacing then
+		cachedFloorSpacing = bestSpacing
+		return bestSpacing
+	end
+
+	if cachedFloorSpacing then
+		return cachedFloorSpacing
+	end
+
+	return FALLBACK_FLOOR_SPACING
+end
+
+local function sameSlotPosition(first, second)
+	local horizontalDifference = Vector2.new(
+		first.X - second.X,
+		first.Z - second.Z
+	).Magnitude
+
+	local verticalDifference =
+		math.abs(first.Y - second.Y)
+
+	return horizontalDifference
+			<= SLOT_HORIZONTAL_TOLERANCE
+		and verticalDifference
+			<= SLOT_VERTICAL_TOLERANCE
+end
+
+local function positionExists(position, occupiedPositions)
+	for _, occupiedPosition in ipairs(occupiedPositions) do
+		if sameSlotPosition(
+			position,
+			occupiedPosition
+		) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function getProjectedCFrame(
+	baseCF,
+	floorNumber,
+	floorSpacing
+)
+	local verticalOffset =
+		floorSpacing * (floorNumber - 1)
+
+	if floorNumber == 3 then
+		verticalOffset -= THIRD_FLOOR_DROP
+	end
+
+	return baseCF
+		+ Vector3.new(
+			0,
+			verticalOffset,
+			0
+		)
+end
+
+local function buildPlotMarkers(
+	plot,
+	defaultFloorSpacing
+)
+	local podiums =
+		plot:FindFirstChild("AnimalPodiums")
+
+	if not podiums then
+		return
+	end
+
+	local levels = getPlotLevels(podiums)
+
+	if #levels == 0 then
+		return
+	end
+
+	local floorSpacing = defaultFloorSpacing
+
+	if #levels >= 2 then
+		local measuredSpacing =
+			levels[2].y - levels[1].y
+
+		if measuredSpacing > FLOOR_TOLERANCE then
+			floorSpacing = measuredSpacing
+		end
+	end
+
+	local lowestFloorY = levels[1].y
+	local slots = {}
+	local occupiedPositions = {}
+
+	for _, slot in ipairs(podiums:GetChildren()) do
+		local cf, size = getBaseBounds(slot)
+
+		if cf and size then
+			table.insert(slots, {
+				cf = cf,
+				size = size,
+			})
+
+			table.insert(
+				occupiedPositions,
+				cf.Position
+			)
+		end
+	end
+
+	for _, slot in ipairs(slots) do
+		makeBox(
+			slot.cf,
+			slot.size,
+			false
+		)
+	end
+
+	for _, slot in ipairs(slots) do
+		local isLowestFloor =
+			math.abs(
+				slot.cf.Position.Y - lowestFloorY
+			) <= FLOOR_TOLERANCE
+
+		if isLowestFloor then
+			for floorNumber = 2, FLOOR_COUNT do
+				local projectedCF =
+					getProjectedCFrame(
+						slot.cf,
+						floorNumber,
+						floorSpacing
+					)
+
+				if not positionExists(
+					projectedCF.Position,
+					occupiedPositions
+				) then
+					makeBox(
+						projectedCF,
+						slot.size,
+						true
+					)
+
+					table.insert(
+						occupiedPositions,
+						projectedCF.Position
+					)
+				end
+			end
+		end
+	end
+end
+
+local rebuildPending = false
+
+local function build()
+	holder:ClearAllChildren()
+
+	local defaultFloorSpacing =
+		detectFloorSpacing()
+
+	for _, plot in ipairs(Plots:GetChildren()) do
+		buildPlotMarkers(
+			plot,
+			defaultFloorSpacing
+		)
+	end
+end
+
+local function rebuild()
+	if rebuildPending then
+		return
+	end
+
+	rebuildPending = true
+
+	task.delay(0.4, function()
+		rebuildPending = false
+
+		if holder.Parent then
+			build()
+		end
+	end)
+end
+
+local watchedPodiums = {}
+
+local function watchPlot(plot)
+	local podiums =
+		plot:WaitForChild(
+			"AnimalPodiums",
+			20
+		)
+
+	if not podiums then
+		return
+	end
+
+	if watchedPodiums[podiums] then
+		return
+	end
+
+	watchedPodiums[podiums] = true
+
+	podiums.ChildAdded:Connect(rebuild)
+	podiums.ChildRemoved:Connect(rebuild)
+	podiums.DescendantAdded:Connect(rebuild)
+	podiums.DescendantRemoving:Connect(rebuild)
+
+	podiums.AncestryChanged:Connect(function()
+		if not podiums:IsDescendantOf(Plots) then
+			watchedPodiums[podiums] = nil
+		end
+	end)
+
+	rebuild()
+end
+
+for _, plot in ipairs(Plots:GetChildren()) do
+	task.spawn(watchPlot, plot)
+end
+
+Plots.ChildAdded:Connect(function(plot)
+	task.spawn(watchPlot, plot)
+	rebuild()
+end)
+
+Plots.ChildRemoved:Connect(rebuild)
+
+task.delay(1, build)
+
+
+--==================================================
+-- Script 2: Next Base / Empty Base
+--==================================================
+
+-- Next Base / Empty Base
+
+local BASE_POSITIONS = {
+	Vector3.new(-342.439, 10.399, 113.107),
+	Vector3.new(-342.439, 10.465,   6.107),
+	Vector3.new(-476.752, 10.465, 114.107),
+	Vector3.new(-476.752, 10.465,   7.107),
+	Vector3.new(-342.440, 10.464, 220.107),
+	Vector3.new(-476.752, 10.465, 221.107),
+	Vector3.new(-342.439, 10.465, -100.893),
+	Vector3.new(-476.752, 10.465,  -99.893),
+}
+
+local MATCH_TOL = 6
+local EMPTY_TEXT = "Empty Base"
+local ARROW = utf8.char(0x2B07)
+
+local function baseIndexFor(model)
+	local ok, cf = pcall(function()
+		return model:GetBoundingBox()
+	end)
+
+	if not ok then
+		return nil
+	end
+
+	local p, bestI, bestD = cf.Position
+
+	for i, bp in ipairs(BASE_POSITIONS) do
+		local dx, dz = p.X - bp.X, p.Z - bp.Z
+		local d = math.sqrt(dx * dx + dz * dz)
+
+		if not bestD or d < bestD then
+			bestI, bestD = i, d
+		end
+	end
+
+	return (bestD and bestD <= MATCH_TOL) and bestI or nil
+end
+
+local bases = {}
+local connected = {}
+local nextBaseConns = {}
+
+local anchor = Instance.new("Part")
+anchor.Name = "__NextBaseAnchor"
+anchor.Anchored = true
+anchor.CanCollide = false
+anchor.CanQuery = false
+anchor.CanTouch = false
+anchor.Transparency = 1
+anchor.Size = Vector3.new(1, 1, 1)
+anchor.Parent = game.CoreGui
+
+local bb = Instance.new("BillboardGui")
+bb.Name = "NextBaseBillboard"
+bb.Adornee = anchor
+bb.Size = UDim2.fromScale(32, 13)
+bb.StudsOffset = Vector3.new(0, 10, 0)
+bb.MaxDistance = math.huge
+bb.AlwaysOnTop = true
+bb.LightInfluence = 0
+bb.Enabled = false
+bb.Parent = anchor
+
+local top = Instance.new("TextLabel", bb)
+top.BackgroundTransparency = 1
+top.AnchorPoint = Vector2.new(0.5, 0.5)
+top.Position = UDim2.fromScale(0.5, 0.30)
+top.Size = UDim2.fromScale(0.95, 0.50)
+top.Font = Enum.Font.GothamBlack
+top.Text = ARROW .. "  NEXT  " .. ARROW
+top.TextScaled = true
+top.TextColor3 = Color3.fromRGB(46, 230, 92)
+top.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+top.TextStrokeTransparency = 0
+
+local bottom = Instance.new("TextLabel", bb)
+bottom.BackgroundTransparency = 1
+bottom.AnchorPoint = Vector2.new(0.5, 0.5)
+bottom.Position = UDim2.fromScale(0.5, 0.72)
+bottom.Size = UDim2.fromScale(0.95, 0.42)
+bottom.Font = Enum.Font.GothamBlack
+bottom.Text = "EMPTY BASE"
+bottom.TextScaled = true
+bottom.TextColor3 = Color3.fromRGB(255, 255, 255)
+bottom.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+bottom.TextStrokeTransparency = 0
+
+local function isEmpty(label)
+	return (label.Text:gsub("^%s+", ""):gsub("%s+$", "")) == EMPTY_TEXT
+end
+
+local function recompute()
+	local targetIdx
+
+	for i = 1, #BASE_POSITIONS do
+		local b = bases[i]
+
+		if b and b.label and isEmpty(b.label) then
+			targetIdx = i
+			break
+		end
+	end
+
+	if targetIdx then
+		anchor.CFrame = bases[targetIdx].cf
+		bb.Enabled = true
+	else
+		bb.Enabled = false
+	end
+end
+
+local function connectLabel(label)
+	if connected[label] then
+		return
+	end
+
+	connected[label] = true
+
+	table.insert(
+		nextBaseConns,
+		label:GetPropertyChangedSignal("Text"):Connect(recompute)
+	)
+end
+
+local function scan()
+	for _, plot in ipairs(Plots:GetChildren()) do
+		local sign = plot:FindFirstChild("PlotSign")
+		local model = sign and sign:FindFirstChild("Model")
+		local gui = sign and sign:FindFirstChild("SurfaceGui")
+		local fr = gui and gui:FindFirstChild("Frame")
+		local label = fr and fr:FindFirstChild("TextLabel")
+
+		if model and label then
+			local idx = baseIndexFor(model)
+
+			if idx then
+				bases[idx] = {
+					label = label,
+					cf = (select(1, model:GetBoundingBox()))
+				}
+
+				connectLabel(label)
+			end
+		end
+	end
+
+	recompute()
+end
+
+scan()
+
+table.insert(
+	nextBaseConns,
+	Plots.DescendantAdded:Connect(function(d)
+		if d:IsA("TextLabel") then
+			task.defer(scan)
+		end
+	end)
+)
+
+table.insert(
+	nextBaseConns,
+	Plots.ChildAdded:Connect(function()
+		task.defer(scan)
+	end)
+)
+
+-- Gabungkan cleanup kedua sistem.
+_G.__CombinedBaseCleanup = function()
+	for _, c in ipairs(nextBaseConns) do
+		pcall(function()
+			c:Disconnect()
+		end)
+	end
+
+	if anchor then
+		pcall(function()
+			anchor:Destroy()
+		end)
+	end
+
+	if holder then
+		pcall(function()
+			holder:Destroy()
+		end)
+	end
+
+	_G.__CombinedBaseCleanup = nil
+end
+
+-- Alias agar script Next Base lama juga bisa membersihkan versi gabungan.
+_G.__NextBaseCleanup = _G.__CombinedBaseCleanup
