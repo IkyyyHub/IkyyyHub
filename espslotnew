@@ -1,0 +1,371 @@
+-- Cleanup script terdahulu jika sedang berjalan
+if _G.__PodiumESPCleanup then pcall(_G.__PodiumESPCleanup) end
+if _G.__NextBaseCleanup then pcall(_G.__NextBaseCleanup) end
+
+local RunService = game:GetService("RunService")
+local hui = (gethui and gethui()) or game:GetService("CoreGui")
+local Plots = workspace:WaitForChild("Plots")
+
+--------------------------------------------------------------------------------
+-- CONFIGURATION & CONSTANTS
+--------------------------------------------------------------------------------
+local RAINBOW_SPEED = 0.5 
+
+local CFG = {
+	COLLIDE = true,
+}
+
+local FILL_T, INNER_T, MISS_T, THICK = 0.55, 0.42, 0.10, 0.05
+local PULSE_SPEED, PULSE_AMOUNT = 2, 0.12
+
+local BASE_POSITIONS = {
+	Vector3.new(-342.439, 10.399, 113.107),
+	Vector3.new(-342.439, 10.465,   6.107),
+	Vector3.new(-476.752, 10.465, 114.107),
+	Vector3.new(-476.752, 10.465,   7.107),
+	Vector3.new(-342.440, 10.464, 220.107),
+	Vector3.new(-476.752, 10.465, 221.107),
+	Vector3.new(-342.439, 10.465,-100.893),
+	Vector3.new(-476.752, 10.465, -99.893),
+}
+local MATCH_TOL = 6
+local EMPTY_TEXT = "Empty Base"
+local ARROW = utf8.char(0x2B07)
+
+local TEMPLATE = {
+	{ 18.500,  1.531, -14.476,  90}, { 18.500,  1.531,  -6.976,  90}, { 18.500,  1.531,   0.524,  90},
+	{ 18.500,  1.531,   8.024,  90}, { 18.500,  1.531,  15.524,  90},
+	{-18.536,  1.531,  15.524, -90}, {-18.536,  1.531,   8.024, -90}, {-18.536,  1.531,   0.524, -90},
+	{-18.536,  1.531,  -6.976, -90}, {-18.536,  1.531, -14.476, -90},
+	{ 18.500, 19.531, -14.476,  90}, { 18.500, 19.531,  -6.976,  90}, { 18.500, 19.531,   0.524,  90},
+	{ 18.500, 19.531,   8.024,  90}, { 18.500, 19.531,  15.524,  90},
+	{-18.380, 19.531, -14.452, -90}, {-18.380, 19.531,  -6.952, -90}, {-18.380, 19.531,   0.548, -90},
+	{ 18.500, 36.531, -12.476,  90}, { 18.500, 36.531,  -4.976,  90}, { 18.500, 36.531,   2.524,  90},
+	{ 18.500, 36.531,  10.024,  90}, { 18.500, 36.531,  17.524,  90},
+	{-18.472, 36.531, -12.501, -90}, {-18.471, 36.531,  -5.001, -90}, {-18.471, 36.531,   2.499, -90},
+	{-18.471, 36.531,   9.999, -90}, {-18.471, 36.531,  17.499, -90},
+}
+
+local OUTER, INNER_SZ, INNER_UP = Vector3.new(6, 0.25, 6), Vector3.new(4, 0.25, 4), 0.25
+
+--------------------------------------------------------------------------------
+-- CLEANUP EXISTING INSTANCES
+--------------------------------------------------------------------------------
+for _, where in ipairs({workspace, game:GetService("CoreGui"), hui}) do
+	for _, n in ipairs({"__PodiumMarkers", "__PodiumTest", "__PodiumCollide", "__NextBaseAnchor"}) do
+		local o = where:FindFirstChild(n)
+		if o then o:Destroy() end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- STATE VARIABLES
+--------------------------------------------------------------------------------
+local markers, fills, coloredObjects, conns = {}, {}, {}, {}
+local bases, connected = {}, {}
+local alive = true
+local solids
+
+--------------------------------------------------------------------------------
+-- PODIUM ESP FUNCTIONS
+--------------------------------------------------------------------------------
+local function keep(x) markers[#markers + 1] = x x.Parent = hui return x end
+
+local function clearPodiums()
+	for _, m in ipairs(markers) do pcall(function() m:Destroy() end) end
+	table.clear(markers)
+	table.clear(fills)
+	table.clear(coloredObjects)
+	if solids then solids:ClearAllChildren() end
+end
+
+local function trackColor(obj)
+	coloredObjects[#coloredObjects + 1] = obj
+end
+
+local function box(adornee, cf, size, trans, isFill)
+	local a = Instance.new("BoxHandleAdornment")
+	a.Adornee = adornee
+	a.Size = size
+	a.CFrame = cf
+	a.Transparency = trans
+	a.AlwaysOnTop = false
+	a.ZIndex = 0
+	keep(a)
+	trackColor(a)
+	if isFill then fills[#fills + 1] = { a = a, base = trans } end
+	return a
+end
+
+local function outline(part)
+	local b = Instance.new("SelectionBox")
+	b.Adornee = part
+	b.LineThickness = THICK
+	b.Transparency = 0
+	b.SurfaceTransparency = 1
+	keep(b)
+	trackColor(b)
+	return b
+end
+
+local function edges(root, cf, size)
+	local t = THICK * 1.6
+	local hx, hz, y = size.X * 0.5, size.Z * 0.5, size.Y * 0.5
+	box(root, cf * CFrame.new(0, y,  hz), Vector3.new(size.X, t, t), 0)
+	box(root, cf * CFrame.new(0, y, -hz), Vector3.new(size.X, t, t), 0)
+	box(root, cf * CFrame.new( hx, y, 0), Vector3.new(t, t, size.Z), 0)
+	box(root, cf * CFrame.new(-hx, y, 0), Vector3.new(t, t, size.Z), 0)
+end
+
+local function solid(worldCF)
+	if not CFG.COLLIDE then return end
+	if not solids then
+		solids = Instance.new("Folder")
+		solids.Name = "__PodiumCollide"
+		solids.Parent = workspace
+	end
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = true
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Transparency = 1
+	p.Size = OUTER
+	p.CFrame = worldCF
+	p.Parent = solids
+end
+
+local function slabsOf(slot)
+	local base = slot:FindFirstChild("Base") or slot
+	local decos = base:FindFirstChild("Decorations")
+	local parts = {}
+	if decos then
+		for _, c in ipairs(decos:GetChildren()) do
+			if c:IsA("BasePart") and c.Transparency < 1 then parts[#parts + 1] = c end
+		end
+	end
+	table.sort(parts, function(a, b) return a.Size.X * a.Size.Z > b.Size.X * b.Size.Z end)
+	return parts
+end
+
+local function drawReal(parts)
+	local anchor = parts[1]
+	for i, p in ipairs(parts) do
+		local rel = anchor.CFrame:Inverse() * p.CFrame
+		box(anchor, rel, p.Size + Vector3.new(0.03, 0.03, 0.03), i == 1 and FILL_T or INNER_T, true)
+		outline(p)
+	end
+end
+
+local function drawGhost(root, e)
+	local cf = CFrame.new(e[1], e[2], e[3]) * CFrame.Angles(0, math.rad(e[4]), 0)
+	box(root, cf, OUTER, FILL_T + MISS_T, true)
+	box(root, cf * CFrame.new(0, INNER_UP, 0), INNER_SZ, INNER_T + MISS_T, true)
+	edges(root, cf, OUTER)
+	solid(root.CFrame * cf)
+end
+
+local function buildPodiums()
+	if not alive then return end
+	clearPodiums()
+	for _, plot in ipairs(Plots:GetChildren()) do
+		local root = plot:FindFirstChild("MainRoot")
+		local pods = plot:FindFirstChild("AnimalPodiums")
+		if root and pods then
+			for i = 1, #TEMPLATE do
+				local sl = pods:FindFirstChild(tostring(i))
+				local parts = sl and slabsOf(sl)
+				if parts and parts[1] then
+					drawReal(parts)
+				else
+					drawGhost(root, TEMPLATE[i])
+				end
+			end
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- NEXT BASE BILLBOARD SYSTEM
+--------------------------------------------------------------------------------
+local anchor = Instance.new("Part")
+anchor.Name = "__NextBaseAnchor"
+anchor.Anchored, anchor.CanCollide, anchor.CanQuery, anchor.CanTouch = true, false, false, false
+anchor.Transparency = 1
+anchor.Size = Vector3.new(1, 1, 1)
+anchor.Parent = game.CoreGui
+
+local bb = Instance.new("BillboardGui")
+bb.Name = "NextBaseBillboard"
+bb.Adornee = anchor
+bb.Size = UDim2.fromScale(32, 13)
+bb.StudsOffset = Vector3.new(0, 10, 0)
+bb.MaxDistance = math.huge
+bb.AlwaysOnTop = true
+bb.LightInfluence = 0
+bb.Enabled = false
+bb.Parent = anchor
+
+local topText = Instance.new("TextLabel", bb)
+topText.BackgroundTransparency = 1
+topText.AnchorPoint = Vector2.new(0.5, 0.5)
+topText.Position = UDim2.fromScale(0.5, 0.30)
+topText.Size = UDim2.fromScale(0.95, 0.50)
+topText.Font = Enum.Font.GothamBlack
+topText.Text = ARROW .. "  NEXT  " .. ARROW
+topText.TextScaled = true
+topText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+topText.TextStrokeTransparency = 0
+
+local bottomText = Instance.new("TextLabel", bb)
+bottomText.BackgroundTransparency = 1
+bottomText.AnchorPoint = Vector2.new(0.5, 0.5)
+bottomText.Position = UDim2.fromScale(0.5, 0.72)
+bottomText.Size = UDim2.fromScale(0.95, 0.42)
+bottomText.Font = Enum.Font.GothamBlack
+bottomText.Text = "EMPTY BASE DI SINI TOLOL"
+bottomText.TextScaled = true
+bottomText.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+bottomText.TextStrokeTransparency = 0
+
+local function baseIndexFor(model)
+	local ok, cf = pcall(function() return (model:GetBoundingBox()) end)
+	if not ok then return nil end
+	local p, bestI, bestD = cf.Position
+	for i, bp in ipairs(BASE_POSITIONS) do
+		local dx, dz = p.X - bp.X, p.Z - bp.Z
+		local d = math.sqrt(dx * dx + dz * dz)
+		if not bestD or d < bestD then bestI, bestD = i, d end
+	end
+	return (bestD and bestD <= MATCH_TOL) and bestI or nil
+end
+
+local function isEmpty(label)
+	return (label.Text:gsub("^%s+", ""):gsub("%s+$", "")) == EMPTY_TEXT
+end
+
+local function recomputeBase()
+	local targetIdx
+	for i = 1, #BASE_POSITIONS do
+		local b = bases[i]
+		if b and b.label and isEmpty(b.label) then targetIdx = i break end
+	end
+	if targetIdx then
+		anchor.CFrame = bases[targetIdx].cf
+		bb.Enabled = true
+	else
+		bb.Enabled = false
+	end
+end
+
+local function connectLabel(label)
+	if connected[label] then return end
+	connected[label] = true
+	table.insert(conns, label:GetPropertyChangedSignal("Text"):Connect(recomputeBase))
+end
+
+local function scanBases()
+	for _, plot in ipairs(Plots:GetChildren()) do
+		local sign  = plot:FindFirstChild("PlotSign")
+		local model = sign and sign:FindFirstChild("Model")
+		local gui   = sign and sign:FindFirstChild("SurfaceGui")
+		local fr    = gui and gui:FindFirstChild("Frame")
+		local label = fr and fr:FindFirstChild("TextLabel")
+		if model and label then
+			local idx = baseIndexFor(model)
+			if idx then
+				bases[idx] = { label = label, cf = (select(1, model:GetBoundingBox())) }
+				connectLabel(label)
+			end
+		end
+	end
+	recomputeBase()
+end
+
+--------------------------------------------------------------------------------
+-- EVENT WATCHERS & INITIALIZATION
+--------------------------------------------------------------------------------
+buildPodiums()
+scanBases()
+
+local pendingRebuild = false
+local function rebuildPodiums()
+	if pendingRebuild or not alive then return end
+	pendingRebuild = true
+	task.delay(0.4, function() pendingRebuild = false buildPodiums() end)
+end
+
+local function watchPlot(plot)
+	local pods = plot:WaitForChild("AnimalPodiums", 20)
+	if pods and alive then
+		conns[#conns + 1] = pods.ChildAdded:Connect(rebuildPodiums)
+		conns[#conns + 1] = pods.ChildRemoved:Connect(rebuildPodiums)
+	end
+end
+
+for _, plot in ipairs(Plots:GetChildren()) do task.spawn(watchPlot, plot) end
+
+conns[#conns + 1] = Plots.ChildAdded:Connect(function(plot)
+	task.spawn(watchPlot, plot)
+	rebuildPodiums()
+	task.defer(scanBases)
+end)
+
+conns[#conns + 1] = Plots.DescendantAdded:Connect(function(d)
+	if d:IsA("TextLabel") then task.defer(scanBases) end
+end)
+
+--------------------------------------------------------------------------------
+-- MAIN LOOP (PULSE & RAINBOW SHIFTING)
+--------------------------------------------------------------------------------
+do
+	local acc = 0
+	conns[#conns + 1] = RunService.Heartbeat:Connect(function(dt)
+		local hue = (os.clock() * RAINBOW_SPEED) % 1
+		local rainbowColor = Color3.fromHSV(hue, 1, 1)
+
+		-- Update Rainbow RGB pada Box & ESP Outlines
+		for _, obj in ipairs(coloredObjects) do
+			if obj.Parent then
+				if obj:IsA("BoxHandleAdornment") then
+					obj.Color3 = rainbowColor
+				elseif obj:IsA("SelectionBox") then
+					obj.Color3 = rainbowColor
+					obj.SurfaceColor3 = rainbowColor
+				end
+			end
+		end
+
+		-- Update Rainbow RGB pada Text Billboard Next Base
+		if bb.Enabled then
+			topText.TextColor3 = rainbowColor
+			bottomText.TextColor3 = rainbowColor
+		end
+
+		-- Pulse Transparency
+		acc = acc + dt
+		if acc >= 0.05 then
+			acc = 0
+			local w = math.sin(os.clock() * PULSE_SPEED) * PULSE_AMOUNT
+			for _, f in ipairs(fills) do
+				if f.a.Parent then f.a.Transparency = math.clamp(f.base + w, 0, 1) end
+			end
+		end
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- COMBINED CLEANUP FUNCTION
+--------------------------------------------------------------------------------
+local function cleanup()
+	alive = false
+	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+	table.clear(conns)
+	clearPodiums()
+	if anchor then anchor:Destroy() end
+	_G.__PodiumESPCleanup = nil
+	_G.__NextBaseCleanup = nil
+end
+
+_G.__PodiumESPCleanup = cleanup
+_G.__NextBaseCleanup = cleanup
