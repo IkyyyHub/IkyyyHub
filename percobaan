@@ -1,91 +1,222 @@
--- Cleanup jika skrip sebelumnya pernah dijalankan
-if _G.__CombinedScriptCleanup then 
-    pcall(_G.__CombinedScriptCleanup) 
-end
+-- Cleanup skrip lama jika sedang berjalan
+if _G.__CombinedScriptCleanup then pcall(_G.__CombinedScriptCleanup) end
 
+local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local LocalPlayer = Players.LocalPlayer
+local hui = (gethui and gethui()) or CoreGui
+local Plots = workspace:WaitForChild("Plots")
 
 local conns = {}
+local alive = true
 
 --------------------------------------------------------------------------------
--- 1. NOTIFICATION SYSTEM
+-- FEATURE 1: PODIUM ESP & SOLID COLLISION
 --------------------------------------------------------------------------------
-local activeNotification = nil
+local PALETTE = {
+	RED    = Color3.fromRGB(255, 60, 60),
+	ORANGE = Color3.fromRGB(255, 150, 40),
+	YELLOW = Color3.fromRGB(255, 225, 60),
+	GREEN  = Color3.fromRGB(70, 235, 110),
+	CYAN   = Color3.fromRGB(55, 225, 235),
+	BLUE   = Color3.fromRGB(55, 185, 255),
+	PURPLE = Color3.fromRGB(175, 95, 255),
+	PINK   = Color3.fromRGB(255, 95, 190),
+	WHITE  = Color3.fromRGB(255, 255, 255),
+	BLACK  = Color3.fromRGB(20, 20, 20),
+}
 
-local function clearNotification()
-	if activeNotification then
-		pcall(function() activeNotification:Destroy() end)
-		activeNotification = nil
+local PODIUM_CFG = {
+	FLOOR_COLOR = { PALETTE.RED, PALETTE.RED, PALETTE.RED },
+	COLLIDE     = true,
+}
+
+local FILL_T, INNER_T, MISS_T, THICK = 0.55, 0.42, 0.10, 0.05
+local PULSE_SPEED, PULSE_AMOUNT = 2, 0.12
+
+local TEMPLATE = {
+	{ 18.500,  1.531, -14.476,  90}, { 18.500,  1.531,  -6.976,  90}, { 18.500,  1.531,   0.524,  90},
+	{ 18.500,  1.531,   8.024,  90}, { 18.500,  1.531,  15.524,  90},
+	{-18.536,  1.531,  15.524, -90}, {-18.536,  1.531,   8.024, -90}, {-18.536,  1.531,   0.524, -90},
+	{-18.536,  1.531,  -6.976, -90}, {-18.536,  1.531, -14.476, -90},
+	{ 18.500, 19.531, -14.476,  90}, { 18.500, 19.531,  -6.976,  90}, { 18.500, 19.531,   0.524,  90},
+	{ 18.500, 19.531,   8.024,  90}, { 18.500, 19.531,  15.524,  90},
+	{-18.380, 19.531, -14.452, -90}, {-18.380, 19.531,  -6.952, -90}, {-18.380, 19.531,   0.548, -90},
+	{ 18.500, 36.531, -12.476,  90}, { 18.500, 36.531,  -4.976,  90}, { 18.500, 36.531,   2.524,  90},
+	{ 18.500, 36.531,  10.024,  90}, { 18.500, 36.531,  17.524,  90},
+	{-18.472, 36.531, -12.501, -90}, {-18.471, 36.531,  -5.001, -90}, {-18.471, 36.531,   2.499, -90},
+	{-18.471, 36.531,   9.999, -90}, {-18.471, 36.531,  17.499, -90},
+}
+
+local OUTER, INNER_SZ, INNER_UP = Vector3.new(6, 0.25, 6), Vector3.new(4, 0.25, 4), 0.25
+
+-- Cleanup instance lama dari podium
+for _, where in ipairs({workspace, CoreGui, hui}) do
+	for _, n in ipairs({"__PodiumMarkers", "__PodiumTest", "__PodiumCollide"}) do
+		local o = where:FindFirstChild(n)
+		if o then o:Destroy() end
 	end
 end
 
-local function showBuyNotification(headPos)
-	clearNotification()
+local markers, fills = {}, {}
+local solids
 
-	local billboard = Instance.new("BillboardGui")
-	billboard.Name = "BuyBaseNotification"
-	billboard.Size = UDim2.new(0, 320, 0, 120)
-	billboard.StudsOffset = Vector3.new(0, 4, 0)
-	billboard.AlwaysOnTop = true
-	billboard.MaxDistance = 100
+local function keep(x) markers[#markers + 1] = x x.Parent = hui return x end
 
-	local frame = Instance.new("Frame", billboard)
-	frame.Size = UDim2.new(1, 0, 1, 0)
-	frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-	frame.BackgroundTransparency = 0.1
-	frame.BorderSizePixel = 0
+local function clearPodiums()
+	for _, m in ipairs(markers) do pcall(function() m:Destroy() end) end
+	table.clear(markers)
+	table.clear(fills)
+	if solids then solids:ClearAllChildren() end
+end
 
-	local uiCorner = Instance.new("UICorner", frame)
-	uiCorner.CornerRadius = UDim.new(0, 10)
+local function box(adornee, cf, size, color, trans, isFill)
+	local a = Instance.new("BoxHandleAdornment")
+	a.Adornee = adornee
+	a.Size = size
+	a.CFrame = cf
+	a.Color3 = color
+	a.Transparency = trans
+	a.AlwaysOnTop = false
+	a.ZIndex = 0
+	keep(a)
+	if isFill then fills[#fills + 1] = { a = a, base = trans } end
+	return a
+end
 
-	local uiStroke = Instance.new("UIStroke", frame)
-	uiStroke.Color = Color3.fromRGB(255, 60, 60)
-	uiStroke.Thickness = 2
+local function outline(part, color)
+	local b = Instance.new("SelectionBox")
+	b.Adornee = part
+	b.Color3 = color
+	b.SurfaceColor3 = color
+	b.LineThickness = THICK
+	b.Transparency = 0
+	b.SurfaceTransparency = 1
+	return keep(b)
+end
 
-	local title = Instance.new("TextLabel", frame)
-	title.Size = UDim2.new(1, 0, 0.4, 0)
-	title.Position = UDim2.new(0, 0, 0.1, 0)
-	title.BackgroundTransparency = 1
-	title.Text = "BASE KOSONG DIIDENTIFIKASI!"
-	title.TextColor3 = Color3.fromRGB(255, 200, 50)
-	title.TextScaled = true
-	title.Font = Enum.Font.GothamBold
+local function edges(root, cf, size, color)
+	local t = THICK * 1.6
+	local hx, hz, y = size.X * 0.5, size.Z * 0.5, size.Y * 0.5
+	box(root, cf * CFrame.new(0, y,  hz), Vector3.new(size.X, t, t), color, 0)
+	box(root, cf * CFrame.new(0, y, -hz), Vector3.new(size.X, t, t), color, 0)
+	box(root, cf * CFrame.new( hx, y, 0), Vector3.new(t, t, size.Z), color, 0)
+	box(root, cf * CFrame.new(-hx, y, 0), Vector3.new(t, t, size.Z), color, 0)
+end
 
-	local button = Instance.new("TextButton", frame)
-	button.Size = UDim2.new(0.8, 0, 0.35, 0)
-	button.Position = UDim2.new(0.1, 0, 0.55, 0)
-	button.BackgroundColor3 = Color3.fromRGB(40, 180, 80)
-	button.Text = "KLIK UNTUK MEMBELI"
-	button.TextColor3 = Color3.fromRGB(255, 255, 255)
-	button.TextScaled = true
-	button.Font = Enum.Font.GothamBlack
-
-	local btnCorner = Instance.new("UICorner", button)
-	btnCorner.CornerRadius = UDim.new(0, 6)
-
-	-- Tempelkan Billboard ke karakter lokal (atau objek opsional)
-	local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-	local head = char:FindFirstChild("Head")
-	if head then
-		billboard.Adornee = head
-		billboard.Parent = CoreGui
-		activeNotification = billboard
+local function solid(worldCF)
+	if not PODIUM_CFG.COLLIDE then return end
+	if not solids then
+		solids = Instance.new("Folder")
+		solids.Name = "__PodiumCollide"
+		solids.Parent = workspace
 	end
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = true
+	p.CanQuery = false
+	p.CanTouch = false
+	p.Transparency = 1
+	p.Size = OUTER
+	p.CFrame = worldCF
+	p.Parent = solids
+end
 
-	table.insert(conns, button.MouseButton1Click:Connect(function()
-		clearNotification()
-		-- Tambahkan logika aksi pembelian khusus Anda di sini jika diperlukan
+local function colorFor(i)
+	if i <= 10 then return PODIUM_CFG.FLOOR_COLOR[1] elseif i <= 18 then return PODIUM_CFG.FLOOR_COLOR[2] end
+	return PODIUM_CFG.FLOOR_COLOR[3]
+end
+
+local function slabsOf(slot)
+	local base = slot:FindFirstChild("Base") or slot
+	local decos = base:FindFirstChild("Decorations")
+	local parts = {}
+	if decos then
+		for _, c in ipairs(decos:GetChildren()) do
+			if c:IsA("BasePart") and c.Transparency < 1 then parts[#parts + 1] = c end
+		end
+	end
+	table.sort(parts, function(a, b) return a.Size.X * a.Size.Z > b.Size.X * b.Size.Z end)
+	return parts
+end
+
+local function drawReal(parts, color)
+	local anchor = parts[1]
+	for i, p in ipairs(parts) do
+		local rel = anchor.CFrame:Inverse() * p.CFrame
+		box(anchor, rel, p.Size + Vector3.new(0.03, 0.03, 0.03), color, i == 1 and FILL_T or INNER_T, true)
+		outline(p, color)
+	end
+end
+
+local function drawGhost(root, e, color)
+	local cf = CFrame.new(e[1], e[2], e[3]) * CFrame.Angles(0, math.rad(e[4]), 0)
+	box(root, cf, OUTER, color, FILL_T + MISS_T, true)
+	box(root, cf * CFrame.new(0, INNER_UP, 0), INNER_SZ, color, INNER_T + MISS_T, true)
+	edges(root, cf, OUTER, color)
+	solid(root.CFrame * cf)
+end
+
+local function buildPodiums()
+	if not alive then return end
+	clearPodiums()
+	for _, plot in ipairs(Plots:GetChildren()) do
+		local root = plot:FindFirstChild("MainRoot")
+		local pods = plot:FindFirstChild("AnimalPodiums")
+		if root and pods then
+			for i = 1, #TEMPLATE do
+				local sl = pods:FindFirstChild(tostring(i))
+				local parts = sl and slabsOf(sl)
+				local c = colorFor(i)
+				if parts and parts[1] then
+					drawReal(parts, c)
+				else
+					drawGhost(root, TEMPLATE[i], c)
+				end
+			end
+		end
+	end
+end
+
+buildPodiums()
+
+local pending = false
+local function rebuildPodiums()
+	if pending or not alive then return end
+	pending = true
+	task.delay(0.4, function() pending = false buildPodiums() end)
+end
+
+local function watchPlotPodiums(plot)
+	local pods = plot:WaitForChild("AnimalPodiums", 20)
+	if pods and alive then
+		table.insert(conns, pods.ChildAdded:Connect(rebuildPodiums))
+		table.insert(conns, pods.ChildRemoved:Connect(rebuildPodiums))
+	end
+end
+
+for _, plot in ipairs(Plots:GetChildren()) do task.spawn(watchPlotPodiums, plot) end
+table.insert(conns, Plots.ChildAdded:Connect(function(plot)
+	task.spawn(watchPlotPodiums, plot)
+	rebuildPodiums()
+end))
+
+do
+	local acc = 0
+	table.insert(conns, RunService.Heartbeat:Connect(function(dt)
+		acc = acc + dt
+		if acc < 0.05 then return end
+		acc = 0
+		local w = math.sin(os.clock() * PULSE_SPEED) * PULSE_AMOUNT
+		for _, f in ipairs(fills) do
+			if f.a.Parent then f.a.Transparency = math.clamp(f.base + w, 0, 1) end
+		end
 	end))
 end
 
---------------------------------------------------------------------------------
--- 2. NEXT BASE INDICATOR (BILLBOARD)
---------------------------------------------------------------------------------
-local Plots = Workspace:WaitForChild("Plots")
 
+--------------------------------------------------------------------------------
+-- FEATURE 2: NEXT EMPTY BASE FINDER
+--------------------------------------------------------------------------------
 local BASE_POSITIONS = {
 	Vector3.new(-342.439, 10.399, 113.107),
 	Vector3.new(-342.439, 10.465,   6.107),
@@ -96,13 +227,9 @@ local BASE_POSITIONS = {
 	Vector3.new(-342.439, 10.465,-100.893),
 	Vector3.new(-476.752, 10.465, -99.893),
 }
-
 local MATCH_TOL = 6
 local EMPTY_TEXT = "Empty Base"
 local ARROW = utf8.char(0x2B07)
-
-local bases = {}
-local connected = {}
 
 local function baseIndexFor(model)
 	local ok, cf = pcall(function() return (model:GetBoundingBox()) end)
@@ -116,24 +243,26 @@ local function baseIndexFor(model)
 	return (bestD and bestD <= MATCH_TOL) and bestI or nil
 end
 
--- Anchor & Billboard GUI utama
-local anchor = Instance.new("Part")
-anchor.Name = "__NextBaseAnchor"
-anchor.Anchored, anchor.CanCollide, anchor.CanQuery, anchor.CanTouch = true, false, false, false
-anchor.Transparency = 1
-anchor.Size = Vector3.new(1, 1, 1)
-anchor.Parent = CoreGui
+local bases = {}
+local connectedLabels = {}
+
+local nextBaseAnchor = Instance.new("Part")
+nextBaseAnchor.Name = "__NextBaseAnchor"
+nextBaseAnchor.Anchored, nextBaseAnchor.CanCollide, nextBaseAnchor.CanQuery, nextBaseAnchor.CanTouch = true, false, false, false
+nextBaseAnchor.Transparency = 1
+nextBaseAnchor.Size = Vector3.new(1, 1, 1)
+nextBaseAnchor.Parent = CoreGui
 
 local bb = Instance.new("BillboardGui")
 bb.Name = "NextBaseBillboard"
-bb.Adornee = anchor
+bb.Adornee = nextBaseAnchor
 bb.Size = UDim2.fromScale(32, 13)
 bb.StudsOffset = Vector3.new(0, 10, 0)
 bb.MaxDistance = math.huge
 bb.AlwaysOnTop = true
 bb.LightInfluence = 0
 bb.Enabled = false
-bb.Parent = anchor
+bb.Parent = nextBaseAnchor
 
 local top = Instance.new("TextLabel", bb)
 top.BackgroundTransparency = 1
@@ -163,34 +292,27 @@ local function isEmpty(label)
 	return (label.Text:gsub("^%s+", ""):gsub("%s+$", "")) == EMPTY_TEXT
 end
 
-local function recompute()
+local function recomputeBases()
 	local targetIdx
 	for i = 1, #BASE_POSITIONS do
 		local b = bases[i]
-		if b and b.label and isEmpty(b.label) then 
-			targetIdx = i 
-			break 
-		end
+		if b and b.label and isEmpty(b.label) then targetIdx = i break end
 	end
-
 	if targetIdx then
-		anchor.CFrame = bases[targetIdx].cf
+		nextBaseAnchor.CFrame = bases[targetIdx].cf
 		bb.Enabled = true
-		-- Tampilkan notifikasi GUI ke pemain
-		showBuyNotification(bases[targetIdx].cf.Position)
 	else
 		bb.Enabled = false
-		clearNotification()
 	end
 end
 
 local function connectLabel(label)
-	if connected[label] then return end
-	connected[label] = true
-	table.insert(conns, label:GetPropertyChangedSignal("Text"):Connect(recompute))
+	if connectedLabels[label] then return end
+	connectedLabels[label] = true
+	table.insert(conns, label:GetPropertyChangedSignal("Text"):Connect(recomputeBases))
 end
 
-local function scan()
+local function scanBases()
 	for _, plot in ipairs(Plots:GetChildren()) do
 		local sign  = plot:FindFirstChild("PlotSign")
 		local model = sign and sign:FindFirstChild("Model")
@@ -205,35 +327,32 @@ local function scan()
 			end
 		end
 	end
-	recompute()
+	recomputeBases()
 end
 
---------------------------------------------------------------------------------
--- 3. INITIALIZATION & EVENT LISTENERS
---------------------------------------------------------------------------------
-scan()
-
+scanBases()
 table.insert(conns, Plots.DescendantAdded:Connect(function(d)
-	if d:IsA("TextLabel") then task.defer(scan) end
+	if d:IsA("TextLabel") then task.defer(scanBases) end
 end))
+table.insert(conns, Plots.ChildAdded:Connect(function() task.defer(scanBases) end))
 
-table.insert(conns, Plots.ChildAdded:Connect(function() 
-	task.defer(scan) 
-end))
 
 --------------------------------------------------------------------------------
--- 4. CLEANUP HANDLER
+-- COMBINED CLEANUP SYSTEM
 --------------------------------------------------------------------------------
 _G.__CombinedScriptCleanup = function()
-	for _, c in ipairs(conns) do 
-		pcall(function() c:Disconnect() end) 
-	end
-	clearNotification()
-	if anchor then 
-		anchor:Destroy() 
-	end
-	_G.__CombinedScriptCleanup = nil
+	alive = false
+	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+	table.clear(conns)
+	
+	clearPodiums()
+	if solids then solids:Destroy() solids = nil end
+	if nextBaseAnchor then nextBaseAnchor:Destroy() end
+	
+	_G.__PodiumESPCleanup = nil
 	_G.__NextBaseCleanup = nil
+	_G.__CombinedScriptCleanup = nil
 end
 
+_G.__PodiumESPCleanup = _G.__CombinedScriptCleanup
 _G.__NextBaseCleanup = _G.__CombinedScriptCleanup
