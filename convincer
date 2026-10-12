@@ -1,0 +1,575 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local camera = workspace.CurrentCamera
+
+pcall(function()
+	game:GetService("StarterGui"):SetCoreGuiEnabled(Enum.CoreGuiType.PlayerList, false)
+end)
+
+for _, gui in ipairs(playerGui:GetChildren()) do
+	if gui.Name == "Convincer" or gui.Name == "ConvincerBackBtn" then
+		gui:Destroy()
+	end
+end
+
+local COLOR_PANEL = Color3.fromRGB(22, 22, 26)
+local COLOR_HEADER = Color3.fromRGB(32, 32, 38)
+local COLOR_YELLOW = Color3.fromRGB(255, 200, 0)
+local COLOR_YELLOW_D = Color3.fromRGB(200, 155, 0)
+local COLOR_TEXT_DIM = Color3.fromRGB(160, 160, 170)
+local COLOR_GREEN = Color3.fromRGB(60, 200, 100)
+local COLOR_RED = Color3.fromRGB(220, 50, 60)
+local COLOR_RED_D = Color3.fromRGB(150, 30, 40)
+
+local isViewing = false
+local viewCenter = Vector3.new(0, 0, 0)
+local camAngleX = 0
+local camAngleY = -0.4
+local camDistance = 45
+local camHeight = 18
+local isDragging = false
+local lastMousePos = nil
+local originalSubject = nil
+local camTween = nil
+
+-- ==========================================
+-- BACK BUTTON
+-- ==========================================
+local backGui = Instance.new("ScreenGui")
+backGui.Name = "ConvincerBackBtn"
+backGui.ResetOnSpawn = false
+backGui.IgnoreGuiInset = true
+backGui.DisplayOrder = 999
+backGui.Parent = playerGui
+
+local backBtn = Instance.new("TextButton")
+backBtn.Size = UDim2.new(0, 180, 0, 40)
+backBtn.Position = UDim2.new(0.5, -90, 1, -75)
+backBtn.BackgroundColor3 = COLOR_RED
+backBtn.Text = "â† BACK"
+backBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+backBtn.TextSize = 14
+backBtn.Font = Enum.Font.GothamBold
+backBtn.BorderSizePixel = 0
+backBtn.Visible = false
+backBtn.Parent = backGui
+Instance.new("UICorner", backBtn).CornerRadius = UDim.new(0, 10)
+
+local backStroke = Instance.new("UIStroke")
+backStroke.Color = COLOR_RED_D
+backStroke.Thickness = 2
+backStroke.Transparency = 0.3
+backStroke.Parent = backBtn
+
+local viewLabel = Instance.new("TextLabel")
+viewLabel.Size = UDim2.new(0, 500, 0, 24)
+viewLabel.Position = UDim2.new(0.5, -250, 0, 20)
+viewLabel.BackgroundTransparency = 1
+viewLabel.Text = ""
+viewLabel.TextColor3 = COLOR_YELLOW
+viewLabel.Font = Enum.Font.GothamBold
+viewLabel.TextSize = 13
+viewLabel.Visible = false
+viewLabel.Parent = backGui
+
+-- ==========================================
+-- CAMERA
+-- ==========================================
+local function updateCamera()
+	if not isViewing then return end
+	local offset = Vector3.new(
+		math.sin(camAngleX) * math.cos(camAngleY),
+		math.sin(camAngleY),
+		math.cos(camAngleX) * math.cos(camAngleY)
+	) * camDistance
+	local camPos = viewCenter + offset + Vector3.new(0, camHeight, 0)
+	camera.CFrame = CFrame.new(camPos, viewCenter)
+end
+
+local function enterView(pos, label)
+	if isViewing then
+		exitView()
+		task.wait(0.15)
+	end
+
+	isViewing = true
+	viewCenter = pos
+	camAngleX = 0
+	camAngleY = -0.35
+	camDistance = 45
+	camHeight = 18
+	originalSubject = camera.CameraSubject
+	camera.CameraType = Enum.CameraType.Scriptable
+	camera.CameraSubject = nil
+
+	local targetOffset = Vector3.new(
+		math.sin(camAngleX) * math.cos(camAngleY),
+		math.sin(camAngleY),
+		math.cos(camAngleX) * math.cos(camAngleY)
+	) * camDistance
+	local targetCF = CFrame.new(viewCenter + targetOffset + Vector3.new(0, camHeight, 0), viewCenter)
+
+	if camTween then camTween:Cancel() end
+	camTween = TweenService:Create(camera, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		CFrame = targetCF,
+	})
+	camTween:Play()
+
+	backBtn.Visible = true
+	viewLabel.Text = label or "Viewing"
+	viewLabel.Visible = true
+end
+
+local function exitView()
+	if not isViewing then return end
+	isViewing = false
+	isDragging = false
+
+	camera.CameraType = Enum.CameraType.Custom
+	if originalSubject then
+		camera.CameraSubject = originalSubject
+	elseif player.Character then
+		local hum = player.Character:FindFirstChildWhichIsA("Humanoid")
+		if hum then camera.CameraSubject = hum end
+	end
+
+	backBtn.Visible = false
+	viewLabel.Visible = false
+end
+
+backBtn.MouseButton1Click:Connect(exitView)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if not isViewing then return end
+	if input.KeyCode == Enum.KeyCode.Escape then exitView() end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		isDragging = true
+		lastMousePos = input.Position
+	elseif input.UserInputType == Enum.UserInputType.Touch then
+		isDragging = true
+		lastMousePos = input.Position
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input, gameProcessed)
+	if not isViewing then return end
+	if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch) then
+		if lastMousePos then
+			local delta = input.Position - lastMousePos
+			camAngleX = camAngleX - delta.X * 0.008
+			camAngleY = math.clamp(camAngleY + delta.Y * 0.008, -1.3, 1.3)
+			lastMousePos = input.Position
+			updateCamera()
+		end
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		isDragging = false
+	elseif input.UserInputType == Enum.UserInputType.Touch then
+		isDragging = false
+	end
+end)
+
+RunService.RenderStepped:Connect(function(dt)
+	if not isViewing then return end
+	if camera.CameraType ~= Enum.CameraType.Scriptable then
+		camera.CameraType = Enum.CameraType.Scriptable
+	end
+	local moveSpeed = camDistance * 1.5 * dt
+	local moved = false
+	local forward = (camera.CFrame.LookVector * Vector3.new(1, 0, 1)).Unit
+	local right = (camera.CFrame.RightVector * Vector3.new(1, 0, 1)).Unit
+
+	if UserInputService:IsKeyDown(Enum.KeyCode.W) then viewCenter = viewCenter + forward * moveSpeed; moved = true end
+	if UserInputService:IsKeyDown(Enum.KeyCode.S) then viewCenter = viewCenter - forward * moveSpeed; moved = true end
+	if UserInputService:IsKeyDown(Enum.KeyCode.A) then viewCenter = viewCenter - right * moveSpeed; moved = true end
+	if UserInputService:IsKeyDown(Enum.KeyCode.D) then viewCenter = viewCenter + right * moveSpeed; moved = true end
+	if UserInputService:IsKeyDown(Enum.KeyCode.E) then viewCenter = viewCenter + Vector3.new(0, moveSpeed, 0); moved = true end
+	if UserInputService:IsKeyDown(Enum.KeyCode.Q) then viewCenter = viewCenter - Vector3.new(0, moveSpeed, 0); moved = true end
+	if moved then updateCamera() end
+end)
+
+-- ==========================================
+-- MAIN UI
+-- ==========================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "Convincer"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = playerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 360, 0, 500)
+mainFrame.Position = UDim2.new(1, -375, 0, 60)
+mainFrame.BackgroundColor3 = COLOR_PANEL
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Parent = screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 16)
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = COLOR_YELLOW_D
+mainStroke.Thickness = 2
+mainStroke.Transparency = 0.4
+mainStroke.Parent = mainFrame
+
+-- HEADER
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 42)
+header.BackgroundColor3 = COLOR_HEADER
+header.BorderSizePixel = 0
+header.Parent = mainFrame
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 16)
+
+local headerFix = Instance.new("Frame")
+headerFix.Size = UDim2.new(1, 0, 0, 16)
+headerFix.Position = UDim2.new(0, 0, 1, -16)
+headerFix.BackgroundColor3 = COLOR_HEADER
+headerFix.BorderSizePixel = 0
+headerFix.Parent = header
+
+local accent = Instance.new("Frame")
+accent.Size = UDim2.new(1, 0, 0, 3)
+accent.Position = UDim2.new(0, 0, 1, -3)
+accent.BackgroundColor3 = COLOR_YELLOW
+accent.BorderSizePixel = 0
+accent.Parent = header
+
+local titleDot = Instance.new("Frame")
+titleDot.Size = UDim2.new(0, 8, 0, 8)
+titleDot.Position = UDim2.new(0, 12, 0.5, -4)
+titleDot.BackgroundColor3 = COLOR_YELLOW
+titleDot.BorderSizePixel = 0
+titleDot.Parent = header
+Instance.new("UICorner", titleDot).CornerRadius = UDim.new(1, 0)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -55, 1, 0)
+title.Position = UDim2.new(0, 26, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "CONVINCER"
+title.TextColor3 = COLOR_YELLOW
+title.Font = Enum.Font.GothamBold
+title.TextSize = 12
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
+
+local minBtn = Instance.new("TextButton")
+minBtn.Size = UDim2.new(0, 26, 0, 26)
+minBtn.Position = UDim2.new(1, -30, 0.5, -13)
+minBtn.BackgroundColor3 = COLOR_YELLOW
+minBtn.Text = "â€”"
+minBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+minBtn.Font = Enum.Font.GothamBold
+minBtn.TextSize = 14
+minBtn.BorderSizePixel = 0
+minBtn.Parent = header
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(1, 0)
+
+-- DRAG
+local draggingPanel, dragStartPanel, startPosPanel = false, nil, nil
+header.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		draggingPanel = true
+		dragStartPanel = input.Position
+		startPosPanel = mainFrame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				draggingPanel = false
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if draggingPanel and (input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStartPanel
+		mainFrame.Position = UDim2.new(
+			startPosPanel.X.Scale, startPosPanel.X.Offset + delta.X,
+			startPosPanel.Y.Scale, startPosPanel.Y.Offset + delta.Y
+		)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch then
+		draggingPanel = false
+	end
+end)
+
+-- SEARCH
+local searchBox = Instance.new("TextBox")
+searchBox.Size = UDim2.new(1, -24, 0, 32)
+searchBox.Position = UDim2.new(0, 12, 0, 50)
+searchBox.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+searchBox.PlaceholderText = "ðŸ” Search display name..."
+searchBox.PlaceholderColor3 = COLOR_TEXT_DIM
+searchBox.Text = ""
+searchBox.TextColor3 = COLOR_YELLOW
+searchBox.Font = Enum.Font.Gotham
+searchBox.TextSize = 11
+searchBox.BorderSizePixel = 0
+searchBox.ClearTextOnFocus = false
+searchBox.Parent = mainFrame
+Instance.new("UICorner", searchBox).CornerRadius = UDim.new(0, 8)
+
+local searchStroke = Instance.new("UIStroke")
+searchStroke.Color = COLOR_YELLOW_D
+searchStroke.Thickness = 1
+searchStroke.Transparency = 0.5
+searchStroke.Parent = searchBox
+
+-- SCROLL
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(1, -24, 1, -98)
+scrollFrame.Position = UDim2.new(0, 12, 0, 88)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.BorderSizePixel = 0
+scrollFrame.ScrollBarThickness = 3
+scrollFrame.ScrollBarImageColor3 = COLOR_YELLOW
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollFrame.Parent = mainFrame
+
+local uiPadding = Instance.new("UIPadding")
+uiPadding.PaddingLeft = UDim.new(0, 2)
+uiPadding.PaddingRight = UDim.new(0, 4)
+uiPadding.PaddingTop = UDim.new(0, 4)
+uiPadding.PaddingBottom = UDim.new(0, 10)
+uiPadding.Parent = scrollFrame
+
+local uiListLayout = Instance.new("UIListLayout")
+uiListLayout.Padding = UDim.new(0, 6)
+uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+uiListLayout.Parent = scrollFrame
+
+uiListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, uiListLayout.AbsoluteContentSize.Y + 12)
+end)
+
+-- ==========================================
+-- SLOT UI
+-- ==========================================
+local slotEntries = {}
+
+for slotId = 1, 28 do
+	local slotFrame = Instance.new("Frame")
+	slotFrame.Name = "Slot_" .. string.format("%02d", slotId)
+	slotFrame.Size = UDim2.new(1, 0, 0, 54)
+	slotFrame.BackgroundColor3 = Color3.fromRGB(32, 32, 38)
+	slotFrame.BorderSizePixel = 0
+	slotFrame.LayoutOrder = slotId
+	slotFrame.Parent = scrollFrame
+	Instance.new("UICorner", slotFrame).CornerRadius = UDim.new(0, 12)
+
+	local slotStroke = Instance.new("UIStroke")
+	slotStroke.Color = Color3.fromRGB(60, 60, 70)
+	slotStroke.Thickness = 1
+	slotStroke.Transparency = 0.3
+	slotStroke.Parent = slotFrame
+
+	local numCircle = Instance.new("Frame")
+	numCircle.Size = UDim2.new(0, 34, 0, 34)
+	numCircle.Position = UDim2.new(0, 8, 0.5, -17)
+	numCircle.BackgroundColor3 = COLOR_YELLOW
+	numCircle.BorderSizePixel = 0
+	numCircle.Parent = slotFrame
+	Instance.new("UICorner", numCircle).CornerRadius = UDim.new(1, 0)
+
+	local numLabel = Instance.new("TextLabel")
+	numLabel.Size = UDim2.new(1, 0, 1, 0)
+	numLabel.BackgroundTransparency = 1
+	numLabel.Text = tostring(slotId)
+	numLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+	numLabel.Font = Enum.Font.GothamBold
+	numLabel.TextSize = 13
+	numLabel.Parent = numCircle
+
+	local displayLabel = Instance.new("TextLabel")
+	displayLabel.Name = "DisplayLabel"
+	displayLabel.Size = UDim2.new(0, 220, 1, 0)
+	displayLabel.Position = UDim2.new(0, 48, 0, 0)
+	displayLabel.BackgroundTransparency = 1
+	displayLabel.Text = "Empty"
+	displayLabel.TextColor3 = COLOR_TEXT_DIM
+	displayLabel.Font = Enum.Font.GothamBold
+	displayLabel.TextSize = 11
+	displayLabel.TextXAlignment = Enum.TextXAlignment.Left
+	displayLabel.TextTruncate = Enum.TextTruncate.AtEnd
+	displayLabel.Parent = slotFrame
+
+	local viewBtn = Instance.new("TextButton")
+	viewBtn.Size = UDim2.new(0, 70, 0, 34)
+	viewBtn.Position = UDim2.new(1, -78, 0.5, -17)
+	viewBtn.BackgroundColor3 = COLOR_YELLOW
+	viewBtn.Text = "VIEW"
+	viewBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	viewBtn.Font = Enum.Font.GothamBold
+	viewBtn.TextSize = 11
+	viewBtn.BorderSizePixel = 0
+	viewBtn.AutoButtonColor = false
+	viewBtn.Parent = slotFrame
+	Instance.new("UICorner", viewBtn).CornerRadius = UDim.new(0, 9)
+
+	viewBtn.MouseButton1Click:Connect(function()
+		local data = slotEntries[slotId]
+		if data and data.position then
+			enterView(data.position, data.displayName or ("Base " .. slotId))
+		end
+	end)
+
+	viewBtn.MouseButton1Down:Connect(function()
+		viewBtn.BackgroundColor3 = COLOR_GREEN
+		viewBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end)
+	viewBtn.MouseButton1Up:Connect(function()
+		viewBtn.BackgroundColor3 = COLOR_YELLOW
+		viewBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	end)
+	viewBtn.MouseLeave:Connect(function()
+		viewBtn.BackgroundColor3 = COLOR_YELLOW
+		viewBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	end)
+
+	slotEntries[slotId] = {
+		frame = slotFrame,
+		displayLabel = displayLabel,
+		slotStroke = slotStroke,
+		displayName = nil,
+		position = nil,
+	}
+end
+
+-- ==========================================
+-- BASE SCANNER
+-- ==========================================
+local function getBaseName(base)
+	local sign = base:FindFirstChild("PlotSign")
+	if not sign then return nil end
+	local sg = sign:FindFirstChild("SurfaceGui")
+	if not sg then return nil end
+	local frame = sg:FindFirstChild("Frame")
+	if not frame then return nil end
+	local label = frame:FindFirstChildWhichIsA("TextLabel")
+	if not label then return nil end
+	return label.Text
+end
+
+local function getBasePosition(base)
+	local sign = base:FindFirstChild("PlotSign")
+	if sign and sign:IsA("BasePart") then return sign.Position end
+	local part = base:FindFirstChildWhichIsA("BasePart", true)
+	if part then return part.Position end
+	local ok, pivot = pcall(function() return base:GetPivot().Position end)
+	if ok then return pivot end
+	return nil
+end
+
+local function findPlayerByUsername(username)
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr.Name == username then return plr end
+	end
+	return nil
+end
+
+local function updateSlots()
+	local plots = workspace:FindFirstChild("Plots")
+	if not plots then return end
+
+	local baseList = {}
+	for _, base in ipairs(plots:GetChildren()) do
+		table.insert(baseList, base)
+	end
+	table.sort(baseList, function(a, b)
+		return a.Name < b.Name
+	end)
+
+	for i, base in ipairs(baseList) do
+		if i > 28 then break end
+		local data = slotEntries[i]
+		if not data then continue end
+
+		local nameText = getBaseName(base) or "?"
+		local pos = getBasePosition(base)
+
+		if pos then
+			data.position = pos
+		end
+
+		local isFilled = nameText ~= "Empty Base" and string.find(nameText, "'s Base")
+
+		if isFilled then
+			local realUsername = string.match(nameText, "^(.-)'s Base$") or nameText
+			local plr = findPlayerByUsername(realUsername)
+			local displayName = plr and plr.DisplayName or realUsername
+
+			if data.displayLabel.Text ~= displayName then
+				data.displayLabel.Text = displayName
+				data.displayLabel.TextColor3 = COLOR_YELLOW
+				data.slotStroke.Color = COLOR_YELLOW_D
+			end
+
+			data.displayName = displayName
+		else
+			if data.displayLabel.Text ~= "Empty" then
+				data.displayLabel.Text = "Empty"
+				data.displayLabel.TextColor3 = COLOR_TEXT_DIM
+				data.slotStroke.Color = Color3.fromRGB(60, 60, 70)
+			end
+			data.displayName = nil
+		end
+	end
+end
+
+task.spawn(function()
+	while true do
+		task.wait(2)
+		pcall(updateSlots)
+	end
+end)
+
+task.wait(1)
+pcall(updateSlots)
+
+-- SEARCH pake DisplayName
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	local query = string.lower(searchBox.Text)
+	for _, data in pairs(slotEntries) do
+		if query == "" then
+			data.frame.Visible = true
+		else
+			local display = string.lower(data.displayLabel.Text or "")
+			if string.find(display, query) then
+				data.frame.Visible = true
+			else
+				data.frame.Visible = false
+			end
+		end
+	end
+end)
+
+-- MINIMIZE
+local minimized = false
+minBtn.MouseButton1Click:Connect(function()
+	minimized = not minimized
+	scrollFrame.Visible = not minimized
+	searchBox.Visible = not minimized
+	if minimized then
+		mainFrame.Size = UDim2.new(0, 360, 0, 42)
+		minBtn.Text = "+"
+	else
+		mainFrame.Size = UDim2.new(0, 360, 0, 500)
+		minBtn.Text = "â€”"
+	end
+end)
+
+print("[Convincer] Loaded â€” 28 slots, DisplayName only.")
